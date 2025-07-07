@@ -1,0 +1,31 @@
+{
+  "title": "Basic Mathematics Quiz",
+  "description": "Test your knowledge of basic math concepts",
+  "questions": [
+    {
+      "question": "What is 2 + 2?",
+      "options": ["3", "4", "5", "6"],
+      "correctAnswer": 1
+    },
+    {
+      "question": "What is the square root of 16?",
+      "options": ["2", "3", "4", "5"],
+      "correctAnswer": 2
+    },
+    {
+      "question": "What is 10 × 5?",
+      "options": ["45", "50", "55", "60"],
+      "correctAnswer": 1
+    },
+    {
+      "question": "What is 100 ÷ 4?",
+      "options": ["20", "25", "30", "35"],
+      "correctAnswer": 1
+    },
+    {
+      "question": "What is 15 - 8?",
+      "options": ["6", "7", "8", "9"],
+      "correctAnswer": 1
+    }
+  ]
+}
