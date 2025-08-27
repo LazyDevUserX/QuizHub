@@ -1,0 +1,35 @@
+name: Auto Send Telegram Polls
+
+on:
+  # This action will trigger automatically on pushes to the main branch
+  # ONLY if the questions.json file was changed.
+  push:
+    branches:
+      - main
+    paths:
+      - 'questions.json'
+
+  # This allows you to run the workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  send-polls-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Poll Sender Script
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python send_polls.py
