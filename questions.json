@@ -1,0 +1,20 @@
+[
+    {
+        "question": "What is the largest ocean on Earth?",
+        "options": ["Atlantic", "Indian", "Arctic", "Pacific"],
+        "correct_option": 3,
+        "explanation": "The Pacific Ocean is the largest and deepest ocean basin, covering more than 63 million square miles and containing more than half of the free water on Earth."
+    },
+    {
+        "question": "Which chemical element has the symbol **Fe**?",
+        "options": ["Gold", "Silver", "Iron", "Lead"],
+        "correct_option": 2,
+        "explanation": "The symbol **Fe** comes from 'ferrum', the Latin word for iron. It's a crucial metal in engineering and for biological functions in the human body."
+    },
+    {
+        "question": "What year did the first moon landing occur?",
+        "options": ["1965", "1969", "1972", "1959"],
+        "correct_option": 1,
+        "explanation": "NASA's Apollo 11 mission successfully landed the first humans on the Moon on July 20, 1969. Neil Armstrong was the first person to step onto the lunar surface."
+    }
+]
