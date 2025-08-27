@@ -50,7 +50,7 @@ async def send_bulk_polls():
             
             # ** MODIFIED LINE **
             # Prepend [MCQHELL] to the question from the JSON file
-            question_text = f"[MCQHELL]\n{mcq['question']}"
+            question_text = f"[MediX]\n{mcq['question']}"
 
             await bot.send_poll(
                 chat_id=CHAT_ID,
