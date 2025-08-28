@@ -12,7 +12,9 @@
     },
     {
         "question": "This is a test question for testing purposes",
-        "options": null
+        "options": [
+            null
+        ],
         "correct_option": 0,
         "explanation": null
     },
