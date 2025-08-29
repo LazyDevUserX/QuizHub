@@ -1,0 +1,2 @@
+START=https://t.me/medixpoll/2205
+END=https://t.me/medixpoll/2458
