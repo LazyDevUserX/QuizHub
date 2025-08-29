@@ -1,0 +1,26 @@
+name: Bulk Delete Telegram Messages
+
+on:
+  push:
+    paths:
+      - "telegram_bulk_delete/ranges/delete_range.txt"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install python-telegram-bot==13.15
+
+      - name: Run bulk delete script
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python telegram_bulk_delete/scripts/bulk_delete.py
