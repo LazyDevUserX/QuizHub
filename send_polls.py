@@ -5,6 +5,7 @@ import json
 import glob
 from telegram import Bot
 from telegram.error import BadRequest
+from telegram.helpers import escape_markdown # NEW: Import the escape function
 
 # Allow nested asyncio
 nest_asyncio.apply()
@@ -75,39 +76,68 @@ async def process_content():
             elif content_type == 'poll':
                 question_text = f"[MediX]\n{item['question']}"
                 explanation_text = item.get('explanation')
+                correct_option_id = item.get('correct_option')
 
-                try:
-                    await bot.send_poll(
-                        chat_id=CHAT_ID,
-                        question=question_text,
-                        options=item["options"],
-                        is_anonymous=True,
-                        type="quiz",
-                        correct_option_id=item["correct_option"],
-                        explanation=explanation_text
-                    )
-                except BadRequest as e:
-                    if "message is too long" in str(e).lower() and explanation_text:
-                        print("⚠️ Warning: Explanation is too long. Sending it as a separate message.")
-                        # Send the poll again, but without the explanation
+                # CASE 1: It's a QUIZ poll (a correct answer is provided)
+                if correct_option_id is not None:
+                    print("    Type: Quiz Poll")
+                    try:
                         await bot.send_poll(
                             chat_id=CHAT_ID,
                             question=question_text,
                             options=item["options"],
                             is_anonymous=True,
                             type="quiz",
-                            correct_option_id=item["correct_option"],
-                            explanation=None
+                            correct_option_id=correct_option_id,
+                            explanation=explanation_text
                         )
-                        # ** NEW LOGIC **
-                        # Now, send the full explanation in a follow-up text message
+                    except BadRequest as e:
+                        if "message is too long" in str(e).lower() and explanation_text:
+                            print("    ⚠️ Warning: Explanation is too long. Sending as a separate message.")
+                            await bot.send_poll(
+                                chat_id=CHAT_ID,
+                                question=question_text,
+                                options=item["options"],
+                                is_anonymous=True,
+                                type="quiz",
+                                correct_option_id=correct_option_id,
+                                explanation=None
+                            )
+                            # MODIFIED: Escape the explanation text to prevent parsing errors
+                            escaped_explanation = escape_markdown(explanation_text, version=2)
+                            full_text = f"_*Explanation:*_\n{escaped_explanation}"
+                            
+                            await bot.send_message(
+                                chat_id=CHAT_ID,
+                                text=full_text,
+                                parse_mode='MarkdownV2' # MODIFIED: Use MarkdownV2 for better escaping
+                            )
+                        else:
+                            raise 
+                
+                # CASE 2: It's a REGULAR poll (correct_option is null)
+                else:
+                    print("    Type: Regular Poll")
+                    await bot.send_poll(
+                        chat_id=CHAT_ID,
+                        question=question_text,
+                        options=item["options"],
+                        is_anonymous=True,
+                        type="regular" 
+                    )
+
+                    if explanation_text:
+                        explanation_header = "❌ *No Correct Option*" 
+                        # MODIFIED: Escape the explanation text to prevent parsing errors
+                        escaped_explanation = escape_markdown(explanation_text, version=2)
+                        full_explanation = f"{explanation_header}\n\n{escaped_explanation}"
+                        
+                        print("    Sending separate explanation message.")
                         await bot.send_message(
                             chat_id=CHAT_ID,
-                            text=f" *Explanation:*\n{explanation_text}",
-                            parse_mode='Markdown'
+                            text=full_explanation,
+                            parse_mode='MarkdownV2' # MODIFIED: Use MarkdownV2 for better escaping
                         )
-                    else:
-                        raise # Re-raise any other errors
 
             await asyncio.sleep(4)
 
