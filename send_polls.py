@@ -123,28 +123,40 @@ async def safe_send(bot, func, *args, **kwargs):
             logging.warning(f"Flood control: received RetryAfter({e.retry_after}s). Waiting {wait_time}s...")
             await asyncio.sleep(wait_time)
         
-        # FIX: Catch BadRequest separately for any truly malformed requests
+        # FIX: Handle BadRequest by checking for the "too long" message
         except BadRequest as e:
-            logging.error(f"Unrecoverable BadRequest on attempt {attempt}: {e}")
-            raise e
-
-        # FIX: Catch generic errors, but inspect the message to find our specific "too long" problem.
-        except (TimedOut, NetworkError) as e:
             error_text = str(e).lower()
             if "too long" in error_text:
                 if 'question' in kwargs and len(kwargs['question']) > LIMITS["POLL_QUESTION"]:
                     original_len = len(kwargs['question'])
                     kwargs['question'] = kwargs['question'][:LIMITS["POLL_QUESTION"]]
-                    logging.warning(f"Caught '{error_text}'. Question auto-trimmed from {original_len} to {len(kwargs['question'])}. Retrying.")
+                    logging.warning(f"Caught BadRequest. Question auto-trimmed from {original_len} to {len(kwargs['question'])}. Retrying.")
                     continue
-                
                 elif 'explanation' in kwargs and kwargs.get('explanation') and len(kwargs['explanation']) > LIMITS["POLL_EXPLANATION"]:
                     original_len = len(kwargs['explanation'])
                     kwargs['explanation'] = kwargs['explanation'][:LIMITS["POLL_EXPLANATION"] - 5]
-                    logging.warning(f"Caught '{error_text}'. Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])}. Retrying.")
+                    logging.warning(f"Caught BadRequest. Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])}. Retrying.")
                     continue
             
-            # If it's a real network error, wait and retry
+            # If it's a different BadRequest, it's unrecoverable
+            logging.error(f"Unrecoverable BadRequest on attempt {attempt}: {e}")
+            raise e
+
+        except (TimedOut, NetworkError) as e:
+            error_text = str(e).lower()
+            if "too long" in error_text:
+                # FIX: Also handle the "too long" message when it's disguised as a NetworkError
+                if 'question' in kwargs and len(kwargs['question']) > LIMITS["POLL_QUESTION"]:
+                    original_len = len(kwargs['question'])
+                    kwargs['question'] = kwargs['question'][:LIMITS["POLL_QUESTION"]]
+                    logging.warning(f"Caught NetworkError wrapping 'too long'. Question auto-trimmed from {original_len} to {len(kwargs['question'])}. Retrying.")
+                    continue
+                elif 'explanation' in kwargs and kwargs.get('explanation') and len(kwargs['explanation']) > LIMITS["POLL_EXPLANATION"]:
+                    original_len = len(kwargs['explanation'])
+                    kwargs['explanation'] = kwargs['explanation'][:LIMITS["POLL_EXPLANATION"] - 5]
+                    logging.warning(f"Caught NetworkError wrapping 'too long'. Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])}. Retrying.")
+                    continue
+            
             wait_seconds = 3 * attempt
             logging.warning(f"Network issue on attempt {attempt}: {e}. Retrying in {wait_seconds}s...")
             await asyncio.sleep(wait_seconds)
