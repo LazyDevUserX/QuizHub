@@ -1,35 +1,58 @@
 name: Auto Send Telegram Polls
 
 on:
-  # This action will trigger automatically on pushes to the main branch
-  # ONLY if the questions.json file was changed.
   push:
     branches:
       - main
     paths:
-      - 'questions.json'
-
-  # This allows you to run the workflow manually from the Actions tab
+      - 'questions.json' # Make sure this is the name of your JSON file
   workflow_dispatch:
 
 jobs:
   send-polls-job:
     runs-on: ubuntu-latest
+    # NEW: Add a timeout for the entire job
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout Repository Code
+      - name: 1. Check out repository code
         uses: actions/checkout@v4
+        # NEW: Fetch full history to correctly detect changes later
+        with:
+          fetch-depth: 0
 
-      - name: Set up Python 3.10
+      - name: 2. Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install Python Dependencies
+      - name: 3. Install Python Dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Poll Sender Script
+      - name: 4. Process All Items in Batches
+        # NEW: This loop runs the python script repeatedly.
+        # It stops when the script no longer makes changes to the progress file.
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python send_polls.py
+          LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
+        run: |
+          while true; do
+            # Run the script for one batch. Adjust batch-size if needed.
+            python send_polls.py questions.json --batch-size 50
+
+            # Check if the progress file was changed by the script
+            if git diff --quiet progress.json; then
+              # If no changes, all batches are done. Break the loop.
+              echo "✅ No change in progress.json. All items sent. Exiting loop."
+              break
+            else
+              # If there were changes, commit them and continue to the next batch.
+              echo "🔄 Progress.json updated. Committing changes and starting next batch..."
+              git config --global user.name 'GitHub Actions Bot'
+              git config --global user.email 'actions-bot@github.com'
+              git add progress.json bot.log
+              git commit -m "Update poll progress after batch"
+              git push
+            fi
+          done
