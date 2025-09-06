@@ -14,13 +14,14 @@ nest_asyncio.apply()
 # ====== CONFIGURATION & CONSTANTS ======
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-# NEW: Dedicated channel for logs and important status updates
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID") 
 
 STATE_FILE = "progress.json"
 LOG_FILE = "bot.log"
 
-# Telegram API limits for validation
+# FIX: Define the prefix in one place to use it in validation and sending
+QUESTION_PREFIX = "[MediX]\n"
+
 LIMITS = {
     "POLL_QUESTION": 300,
     "POLL_OPTION": 100,
@@ -33,20 +34,17 @@ MIN_DELAY_SECONDS = 3.0
 MAX_DELAY_SECONDS = 5.0
 
 # ====== LOGGING SETUP ======
-# NEW: Replaces all print() calls for structured logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler() # Also print logs to console
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler()
     ]
 )
 
 # ====== STATE MANAGEMENT ======
-
 def load_progress(filename=STATE_FILE):
-    """Loads the index of the last successfully sent item."""
     try:
         with open(filename, 'r') as f:
             progress = json.load(f)
@@ -58,7 +56,6 @@ def load_progress(filename=STATE_FILE):
         return 0
 
 def save_progress(index, filename=STATE_FILE):
-    """Saves the index of the next item to be sent."""
     try:
         with open(filename, 'w') as f:
             json.dump({'last_sent_index': index}, f)
@@ -66,9 +63,7 @@ def save_progress(index, filename=STATE_FILE):
         logging.critical(f"Failed to save progress to {filename}. Error: {e}")
 
 # ====== DATA LOADING & VALIDATION ======
-
 def load_items(file_path):
-    """Loads items from a specified JSON file."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             items = json.load(f)
@@ -82,53 +77,48 @@ def load_items(file_path):
         return None
 
 def validate_data(item_list):
-    """Pre-validates all items against Telegram API limits."""
     logging.info("Starting pre-validation process...")
     errors = []
-    # (Validation logic remains the same as before, but uses logging)
     for i, item in enumerate(item_list):
         content_type = item.get('type', 'poll')
         if content_type == 'poll':
             question, options, explanation = item.get('question',''), item.get('options',[]), item.get('explanation','')
+            # FIX: Check the length of the question WITH the prefix
+            prefixed_question_len = len(QUESTION_PREFIX) + len(question)
+            
             if not question: errors.append(f"Item #{i+1}: Poll question is empty.")
-            if len(question) > LIMITS["POLL_QUESTION"]: errors.append(f"Item #{i+1}: Question length ({len(question)}) > limit ({LIMITS['POLL_QUESTION']}).")
+            if prefixed_question_len > LIMITS["POLL_QUESTION"]: 
+                errors.append(f"Item #{i+1}: Prefixed question length ({prefixed_question_len}) > limit ({LIMITS['POLL_QUESTION']}). Original length: {len(question)}.")
             if len(options) > LIMITS["POLL_MAX_OPTIONS"]: errors.append(f"Item #{i+1}: Option count ({len(options)}) > limit ({LIMITS['POLL_MAX_OPTIONS']}).")
             if len(options) < 2: errors.append(f"Item #{i+1}: Poll must have at least 2 options.")
             for o_idx, opt in enumerate(options):
                 if len(opt) > LIMITS["POLL_OPTION"]: errors.append(f"Item #{i+1} Option #{o_idx+1}: Length ({len(opt)}) > limit ({LIMITS['POLL_OPTION']}).")
-            if explanation and len(explanation) > LIMITS["POLL_EXPLANATION"]: logging.warning(f"Item #{i+1}: Explanation length ({len(explanation)}) > limit ({LIMITS['POLL_EXPLANATION']}). Will be trimmed.")
+            if explanation and len(explanation) > LIMITS["POLL_EXPLANATION"]: 
+                logging.warning(f"Item #{i+1}: Explanation length ({len(explanation)}) > limit ({LIMITS['POLL_EXPLANATION']}). Will be auto-trimmed if sent.")
         elif content_type == 'message':
             text = item.get('text', '')
             if not text: errors.append(f"Item #{i+1}: Message text is empty.")
             if len(text) > LIMITS["MESSAGE_TEXT"]: errors.append(f"Item #{i+1}: Message length ({len(text)}) > limit ({LIMITS['MESSAGE_TEXT']}).")
 
     if errors:
-        for error in errors:
-            logging.error(f"Validation Error: {error}")
+        for error in errors: logging.error(f"Validation Error: {error}")
         return False, "\n".join(errors)
     else:
         logging.info("Validation successful. All items conform to basic limits.")
         return True, ""
 
 # ====== TELEGRAM API CORE FUNCTIONS ======
-
 async def send_log_to_telegram(bot, message, level="INFO"):
-    """Sends a message to the dedicated log channel, if configured."""
-    if not LOG_CHANNEL_ID:
-        return
-    
+    if not LOG_CHANNEL_ID: return
     level_icon = {"INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🔥"}.get(level, "🤖")
-    
     try:
-        # Truncate message to avoid hitting Telegram limits in the log message itself
         safe_message = f"{level_icon} {level}\n\n<pre>{message[:4000]}</pre>"
         await bot.send_message(chat_id=LOG_CHANNEL_ID, text=safe_message, parse_mode='HTML')
     except Exception as e:
         logging.error(f"CRITICAL: Failed to send log message to Telegram log channel: {e}")
 
 async def safe_send(bot, func, *args, **kwargs):
-    """Safely send Telegram requests with retry, flood control, and dynamic error handling."""
-    for attempt in range(1, 6): # 5 retries
+    for attempt in range(1, 6):
         try:
             return await func(*args, **kwargs)
         except RetryAfter as e:
@@ -141,13 +131,23 @@ async def safe_send(bot, func, *args, **kwargs):
             await asyncio.sleep(wait_seconds)
         except BadRequest as e:
             error_text = str(e).lower()
-            if "explanation" in kwargs and ("too long" in error_text):
-                explanation = kwargs.get("explanation", "")
-                if explanation:
-                    trimmed = explanation[:LIMITS["POLL_EXPLANATION"] - 10]
-                    logging.warning(f"Explanation auto-trimmed from {len(explanation)} to {len(trimmed)} due to API error.")
-                    kwargs["explanation"] = trimmed
-                    continue
+            if "too long" in error_text:
+                # FIX: Check for and trim long questions first.
+                if 'question' in kwargs and len(kwargs['question']) > LIMITS["POLL_QUESTION"]:
+                    original_len = len(kwargs['question'])
+                    # Trim based on the hard limit minus a small buffer
+                    kwargs['question'] = kwargs['question'][:LIMITS["POLL_QUESTION"]]
+                    logging.warning(f"Question auto-trimmed from {original_len} to {len(kwargs['question'])} due to API error. Retrying.")
+                    continue # Retry the attempt with the corrected question
+                
+                # FIX: Then, check for and trim long explanations.
+                elif 'explanation' in kwargs and kwargs.get('explanation') and len(kwargs['explanation']) > LIMITS["POLL_EXPLANATION"]:
+                    original_len = len(kwargs['explanation'])
+                    kwargs['explanation'] = kwargs['explanation'][:LIMITS["POLL_EXPLANATION"] - 5] # Trim with buffer
+                    logging.warning(f"Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])} due to API error. Retrying.")
+                    continue # Retry the attempt with the corrected explanation
+            
+            # If the error is "too long" but we can't identify the cause, or it's another BadRequest, treat as unrecoverable.
             logging.error(f"Unrecoverable BadRequest on attempt {attempt}: {e}")
             raise e
         except Exception as e:
@@ -157,9 +157,7 @@ async def safe_send(bot, func, *args, **kwargs):
     raise Exception(f"Failed to send message after 5 attempts.")
 
 # ====== MAIN PROCESSING LOGIC ======
-
 async def process_batch(json_file_path, batch_size):
-    """Main function to validate, process, and send a single batch of content."""
     if not BOT_TOKEN or not CHAT_ID:
         logging.critical("BOT_TOKEN or CHAT_ID environment variables are not set. Aborting.")
         return
@@ -167,11 +165,9 @@ async def process_batch(json_file_path, batch_size):
     bot = Bot(token=BOT_TOKEN)
     await send_log_to_telegram(bot, "Bot script started a new run.", "INFO")
 
-    # 1. Load Data
     item_list = load_items(json_file_path)
     if not item_list: return
 
-    # 2. Pre-validate Data (only on the first run)
     start_index = load_progress()
     if start_index == 0:
         is_valid, error_summary = validate_data(item_list)
@@ -179,7 +175,6 @@ async def process_batch(json_file_path, batch_size):
             await send_log_to_telegram(bot, f"Pre-validation failed. Fix errors in source file.\n\nErrors:\n{error_summary}", "CRITICAL")
             raise SystemExit("Validation failed. Halting execution.")
 
-    # 3. Prepare Batch
     items_to_process = item_list[start_index : start_index + batch_size]
     total_new_in_batch = len(items_to_process)
     
@@ -191,18 +186,16 @@ async def process_batch(json_file_path, batch_size):
     logging.info(f"Starting to send batch of {total_new_in_batch} new items...")
     await send_log_to_telegram(bot, f"Processing batch of {total_new_in_batch} items, starting from item #{start_index + 1}.")
 
-    # 4. Process and Send Items in Batch
     for i, item in enumerate(items_to_process):
         absolute_index = start_index + i
         content_type = item.get('type', 'poll')
         logging.info(f"Processing item {absolute_index + 1} of {len(item_list)} (type: {content_type})...")
 
         try:
-            # (Sending logic is the same, just wrapped in the batch loop)
             if content_type == 'message':
                 await safe_send(bot, bot.send_message, chat_id=CHAT_ID, text=item['text'], parse_mode='HTML')
             elif content_type == 'poll':
-                question_text = f"[MediX]\n{item['question']}"
+                question_text = f"{QUESTION_PREFIX}{item['question']}" # Use the constant
                 poll_kwargs = {"chat_id": CHAT_ID, "question": question_text, "options": item["options"], "is_anonymous": True}
                 if item.get('correct_option') is not None:
                     poll_kwargs.update({"type": "quiz", "correct_option_id": item['correct_option'], "explanation": item.get('explanation')})
@@ -233,3 +226,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     asyncio.run(process_batch(args.json_file, args.batch_size))
+
