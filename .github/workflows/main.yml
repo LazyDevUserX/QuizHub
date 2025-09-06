@@ -1,20 +1,24 @@
 name: Auto Send Telegram Polls
 
 on:
-  # This action will trigger automatically on pushes to the main branch
-  # ONLY if the questions.json file was changed.
   push:
     branches:
       - main
     paths:
-      - 'questions.json' # Make sure this matches your file name
+      - 'questions.json'
 
-  # This allows you to run the workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
   send-polls-job:
     runs-on: ubuntu-latest
+
+    # <<< THIS IS THE FIX
+    # By default, the GITHUB_TOKEN has read-only permissions.
+    # This block grants the token permission to write to the repository's contents,
+    # which is required for the 'git push' command to succeed.
+    permissions:
+      contents: write
 
     steps:
       - name: 1. Checkout Repository Code
@@ -34,23 +38,14 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
         run: |
-          # This loop will continue running as long as progress is being made.
           while true; do
-            # STEP A: Run the Python script for ONE batch of 50 items.
-            # The script will send polls and update 'progress.json'.
             python send_polls.py questions.json --batch-size 50
             
-            # STEP B: Check if the script made any progress.
-            # `git diff --quiet` checks if the 'progress.json' file was changed.
-            # If it was NOT changed, it means the script found no new polls to send.
             if git diff --quiet progress.json; then
               echo "✅ No changes in progress.json. All items have been sent. Exiting loop."
-              break # This command exits the 'while' loop.
+              break
             fi
             
-            # STEP C: If progress WAS made, save it for the next run.
-            # We commit the updated 'progress.json' back to your repository.
-            # The next iteration of the loop will use this updated file.
             echo "ℹ️ Progress was made. Committing 'progress.json' for the next batch."
             git config --global user.name 'GitHub Actions Bot'
             git config --global user.email 'actions-bot@github.com'
@@ -58,3 +53,4 @@ jobs:
             git commit -m "Update poll progress"
             git push
           done
+
