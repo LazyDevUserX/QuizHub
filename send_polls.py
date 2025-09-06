@@ -1,35 +1,36 @@
 import asyncio
+import nest_asyncio
 import os
 import json
 import glob
+import random
 from telegram import Bot
-from telegram.error import BadRequest, RetryAfter
-from telegram.helpers import escape_markdown
+from telegram.error import BadRequest, RetryAfter, TimedOut, NetworkError
+
+# Allow nested asyncio
+nest_asyncio.apply()
 
 # ====== CONFIGURATION ======
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-PROGRESS_FILE = "progress.txt"
 
-if not BOT_TOKEN or not CHAT_ID:
-    raise EnvironmentError("❌ BOT_TOKEN or CHAT_ID is not set in environment variables.")
-
-# ====== HELPERS ======
+# ====== FUNCTIONS ======
 
 def find_json_file():
     """Finds the first .json file in the repository's root directory."""
-    json_files = glob.glob("*.json")
+    json_files = glob.glob('*.json')
     if json_files:
         print(f"✅ Found JSON file: {json_files[0]}")
         return json_files[0]
-    print("❌ No .json file found in the repository.")
-    return None
+    else:
+        print("❌ No .json file found in the repository.")
+        return None
 
 
 def load_items(file_path):
     """Loads items (polls or messages) from a specified JSON file."""
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             items = json.load(f)
         print(f"✅ Successfully loaded {len(items)} items from {file_path}")
         return items
@@ -40,76 +41,53 @@ def load_items(file_path):
         return []
 
 
-def split_text(text, max_length=4000):
-    """Splits long text into chunks within Telegram’s 4096 char limit."""
-    return [text[i:i + max_length] for i in range(0, len(text), max_length)]
-
-
-def log_error_locally(message):
-    """Saves errors to a local log file for debugging."""
-    with open("logs.txt", "a", encoding="utf-8") as log_file:
-        log_file.write(message + "\n")
-
-
-def save_progress(i):
-    """Save last successfully sent item index."""
-    with open(PROGRESS_FILE, "w") as f:
-        f.write(str(i))
-
-
-def load_progress():
-    """Load last successfully sent item index."""
-    try:
-        with open(PROGRESS_FILE, "r") as f:
-            return int(f.read().strip())
-    except:
-        return 0
-
-
 async def send_error_to_telegram(bot, error_message):
     """Sends a formatted error message to the Telegram channel."""
     try:
         await bot.send_message(
             chat_id=CHAT_ID,
             text=f"🤖 BOT ERROR 🤖\n\n<pre>{error_message}</pre>",
-            parse_mode="HTML"
+            parse_mode='HTML'
         )
     except Exception as e:
         print(f"❌ CRITICAL: Failed to send error message to Telegram: {e}")
-    finally:
-        log_error_locally(error_message)
 
 
-# ====== RATE CONTROL ======
-base_delay = 1  # start very fast
-max_delay = 10  # cap backoff
-current_delay = base_delay
-
-async def safe_send(action, *args, **kwargs):
-    """Wrapper to safely send messages/polls with flood control & adaptive delay."""
-    global current_delay
-    while True:
+async def safe_send(bot, func, *args, retries=5, **kwargs):
+    """Safely send Telegram requests with retry, flood control, and error handling."""
+    for attempt in range(1, retries + 1):
         try:
-            result = await action(*args, **kwargs)
-            # Success → gently decrease delay towards base
-            if current_delay > base_delay:
-                current_delay -= 1
-            await asyncio.sleep(current_delay)
-            return result
+            return await func(*args, **kwargs)
         except RetryAfter as e:
             wait_time = int(e.retry_after) + 1
-            current_delay = min(current_delay + 2, max_delay)
-            print(f"⏳ Flood control triggered. Waiting {wait_time}s (delay now {current_delay}s)...")
+            print(f"⏳ Flood control: waiting {wait_time}s...")
             await asyncio.sleep(wait_time)
+        except (TimedOut, NetworkError):
+            print(f"⚠️ Network issue on attempt {attempt}, retrying...")
+            await asyncio.sleep(3 * attempt)
+        except BadRequest as e:
+            # Handle explanation too long by trimming
+            if "explanation" in kwargs and "message is too long" in str(e).lower():
+                explanation = kwargs.get("explanation", "")
+                if explanation:
+                    trimmed = explanation[:190]  # Telegram limit ~200 chars
+                    print(f"⚠️ Explanation trimmed from {len(explanation)} → {len(trimmed)} chars")
+                    kwargs["explanation"] = trimmed
+                    continue  # retry with trimmed text
+            raise
         except Exception as e:
-            current_delay = min(current_delay + 2, max_delay)
-            raise e
+            print(f"⚠️ Unexpected error on attempt {attempt}: {e}")
+            if attempt == retries:
+                raise
+            await asyncio.sleep(2 * attempt)
 
-
-# ====== MAIN PROCESS ======
 
 async def process_content():
     """Main function to process and send all content from the JSON file."""
+    if not BOT_TOKEN or not CHAT_ID:
+        print("❌ Error: BOT_TOKEN or CHAT_ID is not set. Aborting.")
+        return
+
     bot = Bot(token=BOT_TOKEN)
     json_file = find_json_file()
 
@@ -122,110 +100,50 @@ async def process_content():
         await send_error_to_telegram(bot, f"File '{json_file}' is empty or invalid.")
         return
 
-    start_index = load_progress()
-    total_items = len(item_list)
+    print("\n🚀 Starting to send content...")
 
-    print(f"\n🚀 Starting to send content (resuming from item {start_index+1}/{total_items})...")
-
-    for i, item in enumerate(item_list[start_index:], start=start_index + 1):
-        content_type = item.get("type", "poll")
-        print(f"--> Processing item {i} of {total_items} (type: {content_type})...")
+    for i, item in enumerate(item_list, start=1):
+        content_type = item.get('type', 'poll')
+        print(f"--> Processing item {i} of {len(item_list)} (type: {content_type})...")
 
         try:
-            # =============== MESSAGES ===============
-            if content_type == "message":
-                if "text" not in item:
-                    raise ValueError(f"Invalid message structure at item #{i}")
-                for chunk in split_text(item["text"]):
-                    await safe_send(bot.send_message, chat_id=CHAT_ID, text=chunk, parse_mode="HTML")
+            if content_type == 'message':
+                await safe_send(bot, bot.send_message, chat_id=CHAT_ID, text=item['text'], parse_mode='HTML')
 
-            # =============== POLLS ===============
-            elif content_type == "poll":
-                if "question" not in item or "options" not in item:
-                    raise ValueError(f"Invalid poll structure at item #{i}")
-
+            elif content_type == 'poll':
                 question_text = f"[MediX]\n{item['question']}"
-                if len(question_text) > 300:
-                    question_text = question_text[:297] + "..."
+                explanation_text = item.get('explanation')
+                correct_option_id = item.get('correct_option')
 
-                if any(len(opt) > 100 for opt in item["options"]):
-                    raise ValueError(f"Poll options too long at item #{i}")
-
-                explanation_text = item.get("explanation")
-                correct_option_id = item.get("correct_option")
-
-                # QUIZ POLL
+                # QUIZ poll
                 if correct_option_id is not None:
-                    print("    Type: Quiz Poll")
-                    try:
-                        await safe_send(
-                            bot.send_poll,
-                            chat_id=CHAT_ID,
-                            question=question_text,
-                            options=item["options"],
-                            is_anonymous=True,
-                            type="quiz",
-                            correct_option_id=correct_option_id,
-                            explanation=explanation_text,
-                        )
-                    except BadRequest as e:
-                        if "message is too long" in str(e).lower() and explanation_text:
-                            print("    ⚠️ Explanation too long, sending separately.")
-                            await safe_send(
-                                bot.send_poll,
-                                chat_id=CHAT_ID,
-                                question=question_text,
-                                options=item["options"],
-                                is_anonymous=True,
-                                type="quiz",
-                                correct_option_id=correct_option_id,
-                                explanation=None,
-                            )
-
-                            # Escape & format as spoiler
-                            escaped_explanation = escape_markdown(explanation_text, version=2)
-                            full_text = f"||{escaped_explanation}||"
-                            await asyncio.sleep(2)  # small delay before explanation
-                            for chunk in split_text(full_text):
-                                await safe_send(
-                                    bot.send_message,
-                                    chat_id=CHAT_ID,
-                                    text=chunk,
-                                    parse_mode="MarkdownV2",
-                                )
-                        else:
-                            raise
-
-                # REGULAR POLL
-                else:
-                    print("    Type: Regular Poll")
+                    print("   Type: Quiz Poll")
                     await safe_send(
+                        bot,
                         bot.send_poll,
                         chat_id=CHAT_ID,
                         question=question_text,
                         options=item["options"],
                         is_anonymous=True,
-                        type="regular",
+                        type="quiz",
+                        correct_option_id=correct_option_id,
+                        explanation=explanation_text
+                    )
+                else:
+                    # REGULAR poll
+                    print("   Type: Regular Poll")
+                    await safe_send(
+                        bot,
+                        bot.send_poll,
+                        chat_id=CHAT_ID,
+                        question=question_text,
+                        options=item["options"],
+                        is_anonymous=True,
+                        type="regular"
                     )
 
-                    if explanation_text:
-                        escaped_explanation = escape_markdown(explanation_text, version=2)
-                        full_explanation = f"❌ *No Correct Option*\n\n||{escaped_explanation}||"
-                        print("    Sending separate explanation message.")
-                        await asyncio.sleep(2)  # small delay before explanation
-                        for chunk in split_text(full_explanation):
-                            await safe_send(
-                                bot.send_message,
-                                chat_id=CHAT_ID,
-                                text=chunk,
-                                parse_mode="MarkdownV2",
-                            )
-
-            else:
-                raise ValueError(f"Unknown content type '{content_type}' at item #{i}")
-
-            # Save progress after successful send
-            save_progress(i)
+            # Randomized safe delay (1–2s jitter)
+            await asyncio.sleep(random.uniform(1.0, 2.0))
 
         except Exception as e:
             error_details = f"Failed to send item #{i}.\nType: {content_type}\nError: {e}"
