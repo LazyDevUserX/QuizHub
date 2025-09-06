@@ -18,8 +18,6 @@ LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
 
 STATE_FILE = "progress.json"
 LOG_FILE = "bot.log"
-
-# FIX: Define the prefix in one place to use it in validation and sending
 QUESTION_PREFIX = "[MediX]\n"
 
 LIMITS = {
@@ -83,7 +81,6 @@ def validate_data(item_list):
         content_type = item.get('type', 'poll')
         if content_type == 'poll':
             question, options, explanation = item.get('question',''), item.get('options',[]), item.get('explanation','')
-            # FIX: Check the length of the question WITH the prefix
             prefixed_question_len = len(QUESTION_PREFIX) + len(question)
             
             if not question: errors.append(f"Item #{i+1}: Poll question is empty.")
@@ -125,35 +122,38 @@ async def safe_send(bot, func, *args, **kwargs):
             wait_time = int(e.retry_after) + 1
             logging.warning(f"Flood control: received RetryAfter({e.retry_after}s). Waiting {wait_time}s...")
             await asyncio.sleep(wait_time)
+        
+        # FIX: Catch BadRequest separately for any truly malformed requests
+        except BadRequest as e:
+            logging.error(f"Unrecoverable BadRequest on attempt {attempt}: {e}")
+            raise e
+
+        # FIX: Catch generic errors, but inspect the message to find our specific "too long" problem.
         except (TimedOut, NetworkError) as e:
+            error_text = str(e).lower()
+            if "too long" in error_text:
+                if 'question' in kwargs and len(kwargs['question']) > LIMITS["POLL_QUESTION"]:
+                    original_len = len(kwargs['question'])
+                    kwargs['question'] = kwargs['question'][:LIMITS["POLL_QUESTION"]]
+                    logging.warning(f"Caught '{error_text}'. Question auto-trimmed from {original_len} to {len(kwargs['question'])}. Retrying.")
+                    continue
+                
+                elif 'explanation' in kwargs and kwargs.get('explanation') and len(kwargs['explanation']) > LIMITS["POLL_EXPLANATION"]:
+                    original_len = len(kwargs['explanation'])
+                    kwargs['explanation'] = kwargs['explanation'][:LIMITS["POLL_EXPLANATION"] - 5]
+                    logging.warning(f"Caught '{error_text}'. Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])}. Retrying.")
+                    continue
+            
+            # If it's a real network error, wait and retry
             wait_seconds = 3 * attempt
             logging.warning(f"Network issue on attempt {attempt}: {e}. Retrying in {wait_seconds}s...")
             await asyncio.sleep(wait_seconds)
-        except BadRequest as e:
-            error_text = str(e).lower()
-            if "too long" in error_text:
-                # FIX: Check for and trim long questions first.
-                if 'question' in kwargs and len(kwargs['question']) > LIMITS["POLL_QUESTION"]:
-                    original_len = len(kwargs['question'])
-                    # Trim based on the hard limit minus a small buffer
-                    kwargs['question'] = kwargs['question'][:LIMITS["POLL_QUESTION"]]
-                    logging.warning(f"Question auto-trimmed from {original_len} to {len(kwargs['question'])} due to API error. Retrying.")
-                    continue # Retry the attempt with the corrected question
-                
-                # FIX: Then, check for and trim long explanations.
-                elif 'explanation' in kwargs and kwargs.get('explanation') and len(kwargs['explanation']) > LIMITS["POLL_EXPLANATION"]:
-                    original_len = len(kwargs['explanation'])
-                    kwargs['explanation'] = kwargs['explanation'][:LIMITS["POLL_EXPLANATION"] - 5] # Trim with buffer
-                    logging.warning(f"Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])} due to API error. Retrying.")
-                    continue # Retry the attempt with the corrected explanation
-            
-            # If the error is "too long" but we can't identify the cause, or it's another BadRequest, treat as unrecoverable.
-            logging.error(f"Unrecoverable BadRequest on attempt {attempt}: {e}")
-            raise e
+
         except Exception as e:
             logging.error(f"Unexpected error on attempt {attempt}: {e}")
             if attempt == 5: raise e
             await asyncio.sleep(2 * attempt)
+            
     raise Exception(f"Failed to send message after 5 attempts.")
 
 # ====== MAIN PROCESSING LOGIC ======
@@ -195,7 +195,7 @@ async def process_batch(json_file_path, batch_size):
             if content_type == 'message':
                 await safe_send(bot, bot.send_message, chat_id=CHAT_ID, text=item['text'], parse_mode='HTML')
             elif content_type == 'poll':
-                question_text = f"{QUESTION_PREFIX}{item['question']}" # Use the constant
+                question_text = f"{QUESTION_PREFIX}{item['question']}"
                 poll_kwargs = {"chat_id": CHAT_ID, "question": question_text, "options": item["options"], "is_anonymous": True}
                 if item.get('correct_option') is not None:
                     poll_kwargs.update({"type": "quiz", "correct_option_id": item['correct_option'], "explanation": item.get('explanation')})
