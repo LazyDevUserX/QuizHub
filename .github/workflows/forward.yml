@@ -1,13 +1,15 @@
 # Name of the workflow, which will appear in the "Actions" tab of your GitHub repository.
-name: Run Telegram Forwarder on Range Change
+name: Run Telegram Forwarder
 
-# This section defines the trigger for the workflow.
+# This section defines the triggers for the workflow.
 on:
+  # Trigger 1: (Automatic) Runs when the specified file is changed.
   push:
-    # This is the key part: it tells the action to ONLY run if changes are
-    # pushed that include this specific file.
     paths:
       - 'forwarder/forwardrange.txt'
+
+  # Trigger 2: (Manual) Allows you to run this workflow manually from the Actions tab.
+  workflow_dispatch:
 
 jobs:
   run-forwarder:
