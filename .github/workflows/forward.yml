@@ -1,45 +1,37 @@
-# Name of the workflow, which will appear in the "Actions" tab of your GitHub repository.
 name: Run Telegram Forwarder
 
-# This section defines the triggers for the workflow.
 on:
-  # Trigger 1: (Automatic) Runs when the specified file is changed.
   push:
     paths:
       - 'forwarder/forwardrange.txt'
-
-  # Trigger 2: (Manual) Allows you to run this workflow manually from the Actions tab.
   workflow_dispatch:
 
 jobs:
   run-forwarder:
-    # The type of virtual machine to run the job on. 'ubuntu-latest' is a standard choice.
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checks out your repository's code so the job can access it.
       - name: Check out repository code
         uses: actions/checkout@v4
 
-      # Step 2: Sets up a Python environment for the script.
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # You can change this to your preferred Python version.
+          python-version: '3.11'
 
-      # Step 3: Installs the required Python libraries from your requirements.txt file.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Path updated to point inside the 'forwarder' subfolder
+          pip install -r forwarder/requirements.txt
 
-      # Step 4: Runs your Python script from its subfolder.
       - name: Run the forwarder script
+        # This tells the step to run from within the 'forwarder' folder
+        working-directory: ./forwarder
         env:
-          # These secrets must be configured in your GitHub repository settings.
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}
           LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
-        # This is the updated line with the correct path and filename.
-        run: python forwarder/forward.py
+        # The command is now simpler because we are in the correct directory
+        run: python forward.py
         
