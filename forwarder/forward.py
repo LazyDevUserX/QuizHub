@@ -15,7 +15,7 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 # --- File Paths ---
 # Placed in a subfolder as per your original setup
-RANGE_FILE = "forwarder/forwardrange.txt"
+RANGE_FILE = "forwardrange.txt"
 INDEX_FILE = "indexed_messages.json" # <-- For saving text messages
 
 # Regular expression to parse Telegram message links
