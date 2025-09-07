@@ -1,0 +1,32 @@
+name: Forward Channel Messages (Bot Only)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'forwarder/**'
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r forwarder/requirements.txt
+
+      - name: Run forwarder
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}
+          LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
+        run: |
+          python forwarder/forward.py
