@@ -17,10 +17,9 @@ STATE_FILE = os.getenv("STATE_FILE", "forwarder/progress.json")
 LINK_RE = re.compile(r"https?://t\\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-bot = Bot(token=API_TOKEN, parse_mode="HTML")
 
 
-async def send_log(text: str):
+async def send_log(bot: Bot, text: str):
     """Send logs to log channel (if available)."""
     if LOG_CHANNEL_ID and LOG_CHANNEL_ID != 0:
         try:
@@ -61,12 +60,12 @@ def parse_range_file(path: str):
 
 async def forward_range():
     if not (API_TOKEN and DEST_CHANNEL_ID and LOG_CHANNEL_ID):
-        await send_log("❌ BOT_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID must be set")
+        print("❌ BOT_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID must be set")
         sys.exit(1)
 
     parsed = parse_range_file(RANGE_FILE)
     if not parsed:
-        await send_log("❌ forwardrange.txt must contain at least 2 message links from the same channel")
+        print("❌ forwardrange.txt must contain at least 2 message links from the same channel")
         sys.exit(1)
 
     source_chat, start_id, end_id = parsed
@@ -76,33 +75,34 @@ async def forward_range():
 
     sent, skipped, failed = 0, 0, 0
 
-    await send_log(f"🚀 Starting copy: {source_chat} [{start_id}..{end_id}] → {DEST_CHANNEL_ID}")
+    async with Bot(token=API_TOKEN, parse_mode="HTML") as bot:
+        await send_log(bot, f"🚀 Starting copy: {source_chat} [{start_id}..{end_id}] → {DEST_CHANNEL_ID}")
 
-    while current <= end_id:
-        try:
-            await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
-            sent += 1
-        except MessageToForwardNotFound:
-            skipped += 1
-        except RetryAfter as e:
-            await send_log(f"⏳ FloodWait: sleeping {e.timeout}s at ID {current}")
-            await asyncio.sleep(e.timeout + 1)
-            continue
-        except TelegramAPIError as e:
-            failed += 1
-            await send_log(f"⚠️ API error at {current}: {e}")
-        except Exception as e:
-            failed += 1
-            await send_log(f"💥 Unexpected error at {current}: {e}")
-        finally:
-            state["last_done"] = current
-            save_state(state)
-            current += 1
+        while current <= end_id:
+            try:
+                await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
+                sent += 1
+            except MessageToForwardNotFound:
+                skipped += 1
+            except RetryAfter as e:
+                await send_log(bot, f"⏳ FloodWait: sleeping {e.timeout}s at ID {current}")
+                await asyncio.sleep(e.timeout + 1)
+                continue
+            except TelegramAPIError as e:
+                failed += 1
+                await send_log(bot, f"⚠️ API error at {current}: {e}")
+            except Exception as e:
+                failed += 1
+                await send_log(bot, f"💥 Unexpected error at {current}: {e}")
+            finally:
+                state["last_done"] = current
+                save_state(state)
+                current += 1
 
-        if sent % 500 == 0 and sent > 0:
-            await send_log(f"✅ Progress: {sent} copied, {skipped} skipped, {failed} failed. Last ID: {current}")
+            if sent % 500 == 0 and sent > 0:
+                await send_log(bot, f"✅ Progress: {sent} copied, {skipped} skipped, {failed} failed. Last ID: {current}")
 
-    await send_log(f"🎉 Copy complete\nSent: {sent}\nSkipped: {skipped}\nFailed: {failed}")
+        await send_log(bot, f"🎉 Copy complete\nSent: {sent}\nSkipped: {skipped}\nFailed: {failed}")
 
 
 if __name__ == "__main__":
