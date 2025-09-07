@@ -5,16 +5,16 @@ import re
 import sys
 import json
 from aiogram import Bot
-from aiogram.utils.exceptions import MessageToForwardNotFound, RetryAfter, TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, RetryAfter
 
-API_TOKEN = os.getenv("BOT_TOKEN")  # from GitHub Secrets
+API_TOKEN = os.getenv("BOT_TOKEN")
 DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 RANGE_FILE = os.getenv("RANGE_FILE", "forwarder/forwardrange.txt")
 STATE_FILE = os.getenv("STATE_FILE", "forwarder/progress.json")
 
-LINK_RE = re.compile(r"https?://t\\.me/([A-Za-z0-9_]+)/([0-9]+)")
+LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -82,15 +82,17 @@ async def forward_range():
             try:
                 await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
                 sent += 1
-            except MessageToForwardNotFound:
-                skipped += 1
             except RetryAfter as e:
                 await send_log(bot, f"⏳ FloodWait: sleeping {e.timeout}s at ID {current}")
                 await asyncio.sleep(e.timeout + 1)
                 continue
             except TelegramAPIError as e:
-                failed += 1
-                await send_log(bot, f"⚠️ API error at {current}: {e}")
+                # Handle "message to forward not found" inside TelegramAPIError
+                if e.error_code == 400 and "message to forward not found" in e.description.lower():
+                    skipped += 1
+                else:
+                    failed += 1
+                    await send_log(bot, f"⚠️ API error at {current}: {e}")
             except Exception as e:
                 failed += 1
                 await send_log(bot, f"💥 Unexpected error at {current}: {e}")
