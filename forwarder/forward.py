@@ -20,9 +20,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 bot = Bot(token=API_TOKEN, parse_mode="HTML")
 
 
-def fatal(msg: str):
-    logging.error(msg)
-    sys.exit(1)
+async def send_log(text: str):
+    """Send logs to log channel (if available)."""
+    if LOG_CHANNEL_ID and LOG_CHANNEL_ID != 0:
+        try:
+            await bot.send_message(LOG_CHANNEL_ID, text)
+        except Exception as e:
+            logging.warning(f"Failed to send log: {e}")
+    else:
+        logging.info(f"LOG >> {text}")
 
 
 def load_state():
@@ -40,32 +46,30 @@ def save_state(state: dict):
 
 def parse_range_file(path: str):
     if not os.path.exists(path):
-        fatal(f"Range file not found: {path}")
+        return None
     content = open(path, "r", encoding="utf-8").read()
     matches = LINK_RE.findall(content)
     if len(matches) < 2:
-        fatal("forwardrange.txt must contain at least 2 message links")
+        return None
     (user1, id1), (user2, id2) = matches[0], matches[1]
     if user1 != user2:
-        fatal("Both links must be from the same source channel")
+        return None
     start_id = min(int(id1), int(id2))
     end_id = max(int(id1), int(id2))
     return "@" + user1, start_id, end_id
 
 
-async def send_log(text: str):
-    if LOG_CHANNEL_ID:
-        try:
-            await bot.send_message(LOG_CHANNEL_ID, text)
-        except Exception as e:
-            logging.warning(f"Failed to send log: {e}")
-
-
 async def forward_range():
     if not (API_TOKEN and DEST_CHANNEL_ID and LOG_CHANNEL_ID):
-        fatal("BOT_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID must be set")
+        await send_log("❌ BOT_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID must be set")
+        sys.exit(1)
 
-    source_chat, start_id, end_id = parse_range_file(RANGE_FILE)
+    parsed = parse_range_file(RANGE_FILE)
+    if not parsed:
+        await send_log("❌ forwardrange.txt must contain at least 2 message links from the same channel")
+        sys.exit(1)
+
+    source_chat, start_id, end_id = parsed
     state = load_state()
     last_done = int(state.get("last_done", start_id - 1))
     current = max(last_done + 1, start_id)
@@ -76,7 +80,6 @@ async def forward_range():
 
     while current <= end_id:
         try:
-            # Use copy_message instead of forward_message
             await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
             sent += 1
         except MessageToForwardNotFound:
@@ -103,8 +106,4 @@ async def forward_range():
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(forward_range())
-    finally:
-        loop.run_until_complete(bot.session.close())
+    asyncio.run(forward_range())
