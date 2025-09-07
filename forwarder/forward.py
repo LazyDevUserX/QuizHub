@@ -12,7 +12,8 @@ DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 # --- File Paths ---
-RANGE_FILE = "forwarder/forwardrange.txt"
+# Corrected path for running within the 'forwarder' working directory
+RANGE_FILE = "forwardrange.txt"
 
 LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
@@ -39,7 +40,7 @@ async def send_log(bot, text):
 
 def create_progress_bar(progress, total, length=10):
     """Creates a text-based progress bar."""
-    if total == 0: return '░' * length
+    if total <= 0: return '░' * length
     filled_length = int(length * progress // total)
     bar = '█' * filled_length + '░' * (length - filled_length)
     return bar
@@ -105,7 +106,6 @@ async def main():
                 await send_log(bot, f"⏱️ <b>Burst complete.</b> Pausing for <code>{BURST_PAUSE_DURATION}s</code> to cool down...")
                 await asyncio.sleep(BURST_PAUSE_DURATION)
             
-            # This is the filled-in progress log block
             if processed_count > 0 and processed_count % 25 == 0:
                 total_messages = end_id - start_id + 1
                 percentage = (processed_count / total_messages) * 100
@@ -125,7 +125,6 @@ async def main():
 
         end_time = datetime.now()
         
-        # This is the filled-in final report block
         total_time = end_time - start_time
         skipped_report = "\n".join(skipped_links) if skipped_links else "None"
         final_report = (
@@ -146,13 +145,11 @@ async def main():
         )
         await send_log(bot, final_report)
 
-# This is the filled-in __main__ block
 if __name__ == "__main__":
     try:
         from dotenv import load_dotenv
-        # Assumes .env file is inside the 'forwarder' folder with the script
         load_dotenv(override=True)
     except ImportError:
         pass
     asyncio.run(main())
-    
+                    
