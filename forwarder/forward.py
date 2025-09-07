@@ -1,12 +1,10 @@
 import asyncio
 import os
 import re
-import json
 from datetime import datetime
 from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import FSInputFile # <-- Import for sending files
 
 # --- Configuration ---
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -15,11 +13,11 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 # --- File Paths ---
 RANGE_FILE = "forwardrange.txt"
-INDEX_FILE = "indexed_messages.json" # <-- File to be created and sent
 
 LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
 def parse_range_file():
+    """Reads the range file and extracts the source channel, start ID, and end ID."""
     with open(RANGE_FILE, "r") as f:
         content = f.read()
     matches = LINK_RE.findall(content)
@@ -32,6 +30,7 @@ def parse_range_file():
     return user1, start_id, end_id
 
 async def send_log(bot, text):
+    """Sends a message to the log channel, ignoring any errors."""
     if LOG_CHANNEL_ID:
         try:
             await bot.send_message(LOG_CHANNEL_ID, text, disable_web_page_preview=True)
@@ -39,21 +38,23 @@ async def send_log(bot, text):
             pass
 
 def create_progress_bar(progress, total, length=10):
+    """Creates a text-based progress bar."""
+    if total == 0: return '░' * length
     filled_length = int(length * progress // total)
     bar = '█' * filled_length + '░' * (length - filled_length)
     return bar
 
 async def main():
+    """Main function to run the forwarder bot."""
     source_user, start_id, end_id = parse_range_file()
     source_chat = f"@{source_user}"
     sent, skipped, failed = 0, 0, 0
     skipped_links = []
-    indexed_messages = [] # <-- List to hold text messages for indexing
 
     start_time = datetime.now()
     async with Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML")) as bot:
         start_message = (
-            f"🚀 <b>Forwarder Initialized</b> 🚀\n"
+            f"🚀 <b>Forwarder Initialized (High-Speed Mode)</b> 🚀\n"
             f"━━━━━━━━━━━━━━━\n"
             f"➤ <b>Source:</b> <code>{source_chat}</code>\n"
             f"➤ <b>Range:</b> <code>{start_id}</code> to <code>{end_id}</code>\n"
@@ -63,70 +64,87 @@ async def main():
         await send_log(bot, start_message)
         
         current = start_id
-        DELAY_BETWEEN_MESSAGES = 1.2
+        # Tuned for performance. A short, consistent delay is faster than hitting long flood waits.
+        DELAY_BETWEEN_MESSAGES = 1.1
 
         while current <= end_id:
             try:
-                # --- MODIFIED: Using forward_message to get message content ---
-                forwarded_message = await bot.forward_message(
+                await bot.copy_message(
                     chat_id=DEST_CHANNEL_ID,
                     from_chat_id=source_chat,
                     message_id=current
                 )
                 sent += 1
-
-                # --- RE-ENABLED: Working indexing logic ---
-                message_text = forwarded_message.text or forwarded_message.caption
-                if message_text:
-                    chat_id_for_link = str(DEST_CHANNEL_ID).replace('-100', '')
-                    link = f"https://t.me/c/{chat_id_for_link}/{forwarded_message.message_id}"
-                    indexed_messages.append({
-                        "text": message_text,
-                        "link": link
-                    })
-
             except TelegramBadRequest as e:
-                # ... (error handling remains the same)
+                error_text = str(e).lower()
+                skipped_link = f"https://t.me/{source_user}/{current}"
+                if "message to copy not found" in error_text:
+                    await send_log(bot, f"🗑️ <b>Skipped (Deleted):</b> <code>{skipped_link}</code>")
+                else:
+                    await send_log(bot, f"⏭️ <b>Skipped (Uncopyable):</b> <code>{skipped_link}</code>")
                 skipped += 1
+                skipped_links.append(skipped_link)
             except TelegramAPIError as e:
-                # ... (error handling remains the same)
-                continue
+                if getattr(e, "retry_after", None):
+                    wait_time = e.retry_after
+                    await send_log(bot, f"⏳ <b>FloodWait:</b> Sleeping for <code>{wait_time}s</code> at ID <code>{current}</code>")
+                    await asyncio.sleep(wait_time)
+                    continue # IMPORTANT: Retry the same message ID after sleeping
+                else:
+                    failed += 1
+                    await send_log(bot, f"⚠️ <b>API Error at ID {current}:</b> <code>{e}</code>")
             except Exception as e:
                 failed += 1
-            
-            # ... (progress update logic remains the same)
+                await send_log(bot, f"💥 <b>Unexpected Error at ID {current}:</b> <code>{e}</code>")
+
+            # Progress update logic
+            total_messages = end_id - start_id + 1
+            processed_count = (sent + skipped + failed)
+            if processed_count > 0 and processed_count % 50 == 0:
+                percentage = (processed_count / total_messages) * 100
+                progress_bar = create_progress_bar(processed_count, total_messages)
+                progress_message = (
+                    f"⏳ <b>Progress Update</b>\n"
+                    f"<code>[{progress_bar}] {percentage:.1f}%</code>\n\n"
+                    f"- <b>Sent:</b> <code>{sent}</code>\n"
+                    f"- <b>Skipped:</b> <code>{skipped}</code>\n"
+                    f"- <b>Failed:</b> <code>{failed}</code>\n"
+                    f"- <b>Last ID:</b> <code>{current}</code>"
+                )
+                await send_log(bot, progress_message)
             
             current += 1
             await asyncio.sleep(DELAY_BETWEEN_MESSAGES)
 
         end_time = datetime.now()
         
-        # --- NEW: Save index locally and send to Telegram ---
-        if indexed_messages:
-            # 1. Save the index file to the runner's local disk
-            try:
-                with open(INDEX_FILE, "w", encoding="utf-8") as f:
-                    json.dump(indexed_messages, f, ensure_ascii=False, indent=4)
-                
-                # 2. Send the newly created file to the log channel
-                await send_log(bot, f"📦 Preparing to send index file with <code>{len(indexed_messages)}</code> entries...")
-                index_file_obj = FSInputFile(INDEX_FILE)
-                await bot.send_document(
-                    chat_id=LOG_CHANNEL_ID,
-                    document=index_file_obj,
-                    caption=f"Attached is the index of {len(indexed_messages)} text messages from the latest run."
-                )
-            except Exception as e:
-                await send_log(bot, f"🔥 <b>Error sending index file:</b> <code>{e}</code>")
-
-        # --- Final Report (UI remains the same) ---
-        # ...
+        # Final Report
+        total_time = end_time - start_time
+        skipped_report = "\n".join(skipped_links) if skipped_links else "None"
+        final_report = (
+            f"🎉 <b>Forwarding Complete!</b> 🎉\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📊 <b>Final Statistics</b>\n"
+            f"➤ <b>Sent:</b> <code>{sent}</code>\n"
+            f"➤ <b>Skipped:</b> <code>{skipped}</code>\n"
+            f"➤ <b>Failed:</b> <code>{failed}</code>\n"
+            f"➤ <b>Total Processed:</b> <code>{sent + skipped + failed}</code>\n\n"
+            f"⏱️ <b>Time Information</b>\n"
+            f"➤ <b>Started:</b> <code>{start_time.strftime('%Y-%m-%d %H:%M:%S')}</code>\n"
+            f"➤ <b>Finished:</b> <code>{end_time.strftime('%Y-%m-%d %H:%M:%S')}</code>\n"
+            f"➤ <b>Duration:</b> <code>{str(total_time).split('.')[0]}</code>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📋 <b>Skipped Messages</b>\n"
+            f"<code>{skipped_report}</code>"
+        )
+        await send_log(bot, final_report)
 
 if __name__ == "__main__":
     try:
         from dotenv import load_dotenv
+        # Assumes .env file is inside the 'forwarder' folder with the script
         load_dotenv(override=True)
     except ImportError:
         pass
     asyncio.run(main())
-                    
+    
