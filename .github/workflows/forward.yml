@@ -1,41 +1,43 @@
-name: Forward Channel Messages
+# Name of the workflow, which will appear in the "Actions" tab of your GitHub repository.
+name: Run Telegram Forwarder on Range Change
 
-# Trigger manually or on changes to forwarder/
+# This section defines the trigger for the workflow.
 on:
-  workflow_dispatch:
   push:
+    # This is the key part: it tells the action to ONLY run if changes are
+    # pushed that include this specific file.
     paths:
-      - "forwarder/**"
+      - 'forwarder/forwardrange.txt'
 
 jobs:
-  forward:
+  run-forwarder:
+    # The type of virtual machine to run the job on. 'ubuntu-latest' is a standard choice.
     runs-on: ubuntu-latest
-    timeout-minutes: 350  # safe for large ranges
 
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      # Step 1: Checks out your repository's code so the job can access it.
+      - name: Check out repository code
+        uses: actions/checkout@v4
 
-      # Step 2: Set up Python 3.11
+      # Step 2: Sets up a Python environment for the script.
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11' # You can change this to your preferred Python version.
 
-      # Step 3: Install dependencies
+      # Step 3: Installs the required Python libraries from your requirements.txt file.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install aiogram
+          pip install -r requirements.txt
 
-      # Step 4: Run the forwarder
-      - name: Run forwarder
+      # Step 4: Runs your main Python script.
+      # IMPORTANT: Replace 'main.py' with the actual name of your Python script file.
+      - name: Run the forwarder script
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}            # your bot token
-          DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}  # numeric ID of the new channel (-100...)
-          LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}    # numeric ID of the log channel (-100...)
-          RANGE_FILE: forwarder/forwardrange.txt          # file with start/end links
-          STATE_FILE: forwarder/progress.json
-        run: |
-          python forwarder/forward.py
+          # These secrets must be configured in your GitHub repository settings.
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}
+          LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
+        run: python main.py # <-- CHANGE 'main.py' IF YOUR SCRIPT IS NAMED DIFFERENTLY
+
