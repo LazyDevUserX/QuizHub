@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties
+from aiogram.types import Message, Poll, InputFile
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
 # ----- CONFIG -----
@@ -34,7 +35,7 @@ def load_state():
             with open(STATE_FILE, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
-            return {}  # start fresh if file is empty/corrupt
+            return {}
     return {}
 
 def save_state(state):
@@ -49,6 +50,60 @@ async def send_log(bot, text):
         except:
             pass
 
+# ----- FORWARDING -----
+async def forward_message(bot: Bot, msg: Message):
+    """Send any message to the destination channel, retry until successful."""
+    while True:
+        try:
+            # Try normal copy first
+            await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=msg.chat.id, message_id=msg.message_id)
+            return
+        except TelegramBadRequest:
+            # Fallback: send based on message type
+            try:
+                if msg.text:
+                    await bot.send_message(DEST_CHANNEL_ID, text=msg.text)
+                elif msg.poll:
+                    p: Poll = msg.poll
+                    await bot.send_poll(
+                        DEST_CHANNEL_ID,
+                        question=p.question,
+                        options=[o.text for o in p.options],
+                        type=p.type,
+                        is_anonymous=p.is_anonymous,
+                        allows_multiple_answers=p.allows_multiple_answers
+                    )
+                elif msg.photo:
+                    await bot.send_photo(DEST_CHANNEL_ID, photo=msg.photo[-1].file_id, caption=msg.caption or "")
+                elif msg.video:
+                    await bot.send_video(DEST_CHANNEL_ID, video=msg.video.file_id, caption=msg.caption or "")
+                elif msg.document:
+                    await bot.send_document(DEST_CHANNEL_ID, document=msg.document.file_id, caption=msg.caption or "")
+                elif msg.audio:
+                    await bot.send_audio(DEST_CHANNEL_ID, audio=msg.audio.file_id, caption=msg.caption or "")
+                elif msg.voice:
+                    await bot.send_voice(DEST_CHANNEL_ID, voice=msg.voice.file_id, caption=msg.caption or "")
+                elif msg.sticker:
+                    await bot.send_sticker(DEST_CHANNEL_ID, sticker=msg.sticker.file_id)
+                else:
+                    # Last resort: try copy_message again
+                    await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=msg.chat.id, message_id=msg.message_id)
+                return
+            except TelegramAPIError as e:
+                if getattr(e, "retry_after", None):
+                    await asyncio.sleep(e.retry_after + 1)
+                else:
+                    await asyncio.sleep(1)
+            except Exception:
+                await asyncio.sleep(1)
+        except TelegramAPIError as e:
+            if getattr(e, "retry_after", None):
+                await asyncio.sleep(e.retry_after + 1)
+            else:
+                await asyncio.sleep(1)
+        except Exception:
+            await asyncio.sleep(1)
+
 # ----- MAIN -----
 async def main():
     source_chat, start_id, end_id = parse_range_file()
@@ -62,31 +117,21 @@ async def main():
         await send_log(bot, f"🚀 Starting forward: {source_chat} [{start_id}..{end_id}] → {DEST_CHANNEL_ID}\nStart time: {start_time}")
 
         while current <= end_id:
-            success = False
-            while not success:
+            # Fetch the original message
+            msg = None
+            while not msg:
                 try:
-                    # Try to copy the message (fast, keeps formatting)
-                    await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
-                    success = True
-                except TelegramBadRequest:
-                    # Fallback: fetch original message content and send as text
-                    try:
-                        msg = await bot.get_message(chat_id=source_chat, message_id=current)
-                        content = msg.text or msg.caption or ""
-                        if content.strip():
-                            await bot.send_message(chat_id=DEST_CHANNEL_ID, text=content)
-                        else:
-                            # last resort: try copy again (may still fail for unsupported types)
-                            await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
-                        success = True
-                    except Exception:
-                        await asyncio.sleep(1)  # retry until success
+                    msg = await bot.get_message(chat_id=source_chat, message_id=current)
                 except TelegramAPIError as e:
-                    # Handle flood wait
                     if getattr(e, "retry_after", None):
                         await asyncio.sleep(e.retry_after + 1)
                     else:
                         await asyncio.sleep(1)
+                except Exception:
+                    await asyncio.sleep(1)
+
+            # Forward it (guaranteed)
+            await forward_message(bot, msg)
 
             sent += 1
             state["last_done"] = current
