@@ -1,93 +1,76 @@
 import asyncio
-import logging
 import os
 import re
-import sys
 import json
 from aiogram import Bot
+from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError
 
+# ----- CONFIG -----
 API_TOKEN = os.getenv("BOT_TOKEN")
 DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-
-RANGE_FILE = os.getenv("RANGE_FILE", "forwarder/forwardrange.txt")
-STATE_FILE = os.getenv("STATE_FILE", "forwarder/progress.json")
+RANGE_FILE = "forwarder/forwardrange.txt"
+STATE_FILE = "forwarder/progress.json"
 
 LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-async def send_log(bot: Bot, text: str):
-    if LOG_CHANNEL_ID and LOG_CHANNEL_ID != 0:
-        try:
-            await bot.send_message(LOG_CHANNEL_ID, text)
-        except Exception as e:
-            logging.warning(f"Failed to send log: {e}")
-    else:
-        logging.info(f"LOG >> {text}")
-
+# ----- HELPERS -----
+def parse_range_file():
+    """Return (source_chat, start_id, end_id)"""
+    if not os.path.exists(RANGE_FILE):
+        raise Exception(f"{RANGE_FILE} not found")
+    content = open(RANGE_FILE, "r").read()
+    matches = LINK_RE.findall(content)
+    if len(matches) < 2:
+        raise Exception(f"{RANGE_FILE} must contain at least 2 message links from the same channel")
+    (user1, id1), (user2, id2) = matches[0], matches[1]
+    if user1 != user2:
+        raise Exception("Both links must be from the same channel")
+    start_id, end_id = min(int(id1), int(id2)), max(int(id1), int(id2))
+    return f"@{user1}", start_id, end_id
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
+        with open(STATE_FILE, "r") as f:
             return json.load(f)
     return {}
 
-
-def save_state(state: dict):
+def save_state(state):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
 
+async def send_log(bot, text):
+    if LOG_CHANNEL_ID:
+        try:
+            await bot.send_message(LOG_CHANNEL_ID, text)
+        except:
+            pass  # ignore log errors
 
-def parse_range_file(path: str):
-    if not os.path.exists(path):
-        return None
-    content = open(path, "r", encoding="utf-8").read()
-    matches = LINK_RE.findall(content)
-    if len(matches) < 2:
-        return None
-    (user1, id1), (user2, id2) = matches[0], matches[1]
-    if user1 != user2:
-        return None
-    start_id = min(int(id1), int(id2))
-    end_id = max(int(id1), int(id2))
-    return "@" + user1, start_id, end_id
-
-
-async def forward_range():
-    if not (API_TOKEN and DEST_CHANNEL_ID and LOG_CHANNEL_ID):
+# ----- MAIN -----
+async def main():
+    if not all([API_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID]):
         print("❌ BOT_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID must be set")
-        sys.exit(1)
+        return
 
-    parsed = parse_range_file(RANGE_FILE)
-    if not parsed:
-        print("❌ forwardrange.txt must contain at least 2 message links from the same channel")
-        sys.exit(1)
-
-    source_chat, start_id, end_id = parsed
+    source_chat, start_id, end_id = parse_range_file()
     state = load_state()
-    last_done = int(state.get("last_done", start_id - 1))
-    current = max(last_done + 1, start_id)
-
+    current = max(state.get("last_done", start_id - 1) + 1, start_id)
     sent, skipped, failed = 0, 0, 0
 
-    async with Bot(token=API_TOKEN, parse_mode="HTML") as bot:
-        await send_log(bot, f"🚀 Starting copy: {source_chat} [{start_id}..{end_id}] → {DEST_CHANNEL_ID}")
+    async with Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML")) as bot:
+        await send_log(bot, f"🚀 Starting forward: {source_chat} [{start_id}..{end_id}] → {DEST_CHANNEL_ID}")
 
         while current <= end_id:
             try:
                 await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
                 sent += 1
             except TelegramAPIError as e:
-                # Handle FloodWait / RetryAfter
-                if hasattr(e, "retry_after") and e.retry_after:
+                if getattr(e, "retry_after", None):
                     await send_log(bot, f"⏳ FloodWait: sleeping {e.retry_after}s at ID {current}")
                     await asyncio.sleep(e.retry_after + 1)
                     continue
-                # Handle "message to forward not found"
                 if e.error_code == 400 and "message to forward not found" in e.description.lower():
                     skipped += 1
                 else:
@@ -101,11 +84,10 @@ async def forward_range():
                 save_state(state)
                 current += 1
 
-            if sent % 500 == 0 and sent > 0:
-                await send_log(bot, f"✅ Progress: {sent} copied, {skipped} skipped, {failed} failed. Last ID: {current}")
+            if sent % 100 == 0 and sent > 0:
+                await send_log(bot, f"✅ Progress: sent={sent}, skipped={skipped}, failed={failed}, last_id={current}")
 
-        await send_log(bot, f"🎉 Copy complete\nSent: {sent}\nSkipped: {skipped}\nFailed: {failed}")
-
+        await send_log(bot, f"🎉 Done! Sent={sent}, Skipped={skipped}, Failed={failed}")
 
 if __name__ == "__main__":
-    asyncio.run(forward_range())
+    asyncio.run(main())
