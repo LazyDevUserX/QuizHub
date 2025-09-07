@@ -1,32 +1,41 @@
-name: Forward Channel Messages (Bot Only)
+name: Forward Channel Messages
 
+# Trigger manually or on changes to forwarder/
 on:
   workflow_dispatch:
   push:
     paths:
-      - 'forwarder/**'
+      - "forwarder/**"
 
 jobs:
   forward:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 350  # safe for large ranges
+
     steps:
-      - uses: actions/checkout@v4
+      # Step 1: Checkout the repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
+      # Step 2: Set up Python 3.11
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
+      # Step 3: Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r forwarder/requirements.txt
+          pip install aiogram
 
+      # Step 4: Run the forwarder
       - name: Run forwarder
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}
-          LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}            # your bot token
+          DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}  # numeric ID of the new channel (-100...)
+          LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}    # numeric ID of the log channel (-100...)
+          RANGE_FILE: forwarder/forwardrange.txt          # file with start/end links
+          STATE_FILE: forwarder/progress.json
         run: |
           python forwarder/forward.py
