@@ -5,7 +5,7 @@ import re
 import sys
 import json
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, RetryAfter
+from aiogram.exceptions import TelegramAPIError
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
@@ -20,7 +20,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 async def send_log(bot: Bot, text: str):
-    """Send logs to log channel (if available)."""
     if LOG_CHANNEL_ID and LOG_CHANNEL_ID != 0:
         try:
             await bot.send_message(LOG_CHANNEL_ID, text)
@@ -82,12 +81,13 @@ async def forward_range():
             try:
                 await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
                 sent += 1
-            except RetryAfter as e:
-                await send_log(bot, f"⏳ FloodWait: sleeping {e.timeout}s at ID {current}")
-                await asyncio.sleep(e.timeout + 1)
-                continue
             except TelegramAPIError as e:
-                # Handle "message to forward not found" inside TelegramAPIError
+                # Handle FloodWait / RetryAfter
+                if hasattr(e, "retry_after") and e.retry_after:
+                    await send_log(bot, f"⏳ FloodWait: sleeping {e.retry_after}s at ID {current}")
+                    await asyncio.sleep(e.retry_after + 1)
+                    continue
+                # Handle "message to forward not found"
                 if e.error_code == 400 and "message to forward not found" in e.description.lower():
                     skipped += 1
                 else:
