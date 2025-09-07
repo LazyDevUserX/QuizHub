@@ -54,7 +54,7 @@ async def main():
     start_time = datetime.now()
     async with Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML")) as bot:
         start_message = (
-            f"🚀 <b>Forwarder Initialized (Short Cooldown Test)</b> 🚀\n"
+            f"🚀 <b>Forwarder Initialized (Peak Performance)</b> 🚀\n"
             f"━━━━━━━━━━━━━━━\n"
             f"➤ <b>Source:</b> <code>{source_chat}</code>\n"
             f"➤ <b>Range:</b> <code>{start_id}</code> to <code>{end_id}</code>\n"
@@ -64,10 +64,11 @@ async def main():
         await send_log(bot, start_message)
         
         current = start_id
-        # --- NEW TEST: Burst and Short Pause Configuration ---
-        DELAY_BETWEEN_MESSAGES = 0.2
-        BURST_SIZE = 19
-        BURST_PAUSE_DURATION = 21 # Testing a shorter, 21-second cooldown
+        # --- Data-Driven Burst Configuration ---
+        # Tuned based on the rate limit tests for your specific environment.
+        DELAY_BETWEEN_MESSAGES = 0.2  # Short delay between messages within a burst.
+        BURST_SIZE = 19                # Safe burst size (observed limit was 20).
+        BURST_PAUSE_DURATION = 43      # Safe pause (observed cooldown was 42s).
 
         while current <= end_id:
             try:
@@ -87,9 +88,10 @@ async def main():
                 skipped += 1
                 skipped_links.append(skipped_link)
             except TelegramAPIError as e:
+                # This is now a safety net; it should not be triggered in normal operation.
                 if getattr(e, "retry_after", None):
                     wait_time = e.retry_after
-                    await send_log(bot, f"💥 <b>FloodWait Hit:</b> Sleeping for <code>{wait_time}s</code> at ID <code>{current}</code>")
+                    await send_log(bot, f"💥 <b>Unexpected FloodWait:</b> Sleeping for <code>{wait_time}s</code> at ID <code>{current}</code>")
                     await asyncio.sleep(wait_time)
                     continue 
                 else:
@@ -101,10 +103,12 @@ async def main():
 
             processed_count = sent + skipped
             
+            # Proactively pause after each burst to avoid flood waits.
             if processed_count > 0 and processed_count % BURST_SIZE == 0:
-                await send_log(bot, f"⏱️ <b>Burst complete.</b> Proactively pausing for <code>{BURST_PAUSE_DURATION}s</code>...")
+                await send_log(bot, f"⏱️ <b>Burst complete.</b> Pausing for <code>{BURST_PAUSE_DURATION}s</code>...")
                 await asyncio.sleep(BURST_PAUSE_DURATION)
             
+            # Send a progress update every 25 processed messages.
             if processed_count > 0 and processed_count % 25 == 0:
                 total_messages = end_id - start_id + 1
                 percentage = (processed_count / total_messages) * 100
@@ -139,7 +143,7 @@ async def main():
             f"➤ <b>Finished:</b> <code>{end_time.strftime('%Y-%m-%d %H:%M:%S')}</code>\n"
             f"➤ <b>Duration:</b> <code>{str(total_time).split('.')[0]}</code>\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"📋 <b>Skipped Messages</b>\n"
+            f"📋 <b>Skipped Messages</b>\n\n"
             f"{skipped_report}"
         )
         await send_log(bot, final_report)
@@ -151,4 +155,3 @@ if __name__ == "__main__":
     except ImportError:
         pass
     asyncio.run(main())
-                
