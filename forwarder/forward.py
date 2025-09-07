@@ -54,7 +54,7 @@ async def main():
     start_time = datetime.now()
     async with Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML")) as bot:
         start_message = (
-            f"🚀 <b>Forwarder Initialized (High-Speed Mode)</b> 🚀\n"
+            f"🚀 <b>Forwarder Initialized (Adaptive Speed)</b> 🚀\n"
             f"━━━━━━━━━━━━━━━\n"
             f"➤ <b>Source:</b> <code>{source_chat}</code>\n"
             f"➤ <b>Range:</b> <code>{start_id}</code> to <code>{end_id}</code>\n"
@@ -64,8 +64,8 @@ async def main():
         await send_log(bot, start_message)
         
         current = start_id
-        # Tuned for performance. A short, consistent delay is faster than hitting long flood waits.
-        DELAY_BETWEEN_MESSAGES = 1.1
+        # Start with an aggressive delay; will increase automatically if needed.
+        delay_between_messages = 1.0
 
         while current <= end_id:
             try:
@@ -78,16 +78,20 @@ async def main():
             except TelegramBadRequest as e:
                 error_text = str(e).lower()
                 skipped_link = f"https://t.me/{source_user}/{current}"
+                # MODIFIED: Removed <code> tags to make links clickable
                 if "message to copy not found" in error_text:
-                    await send_log(bot, f"🗑️ <b>Skipped (Deleted):</b> <code>{skipped_link}</code>")
+                    await send_log(bot, f"🗑️ <b>Skipped (Deleted):</b> {skipped_link}")
                 else:
-                    await send_log(bot, f"⏭️ <b>Skipped (Uncopyable):</b> <code>{skipped_link}</code>")
+                    await send_log(bot, f"⏭️ <b>Skipped (Uncopyable):</b> {skipped_link}")
                 skipped += 1
                 skipped_links.append(skipped_link)
             except TelegramAPIError as e:
                 if getattr(e, "retry_after", None):
                     wait_time = e.retry_after
-                    await send_log(bot, f"⏳ <b>FloodWait:</b> Sleeping for <code>{wait_time}s</code> at ID <code>{current}</code>")
+                    # MODIFIED: Adaptive delay increase
+                    new_delay = delay_between_messages + 0.5
+                    await send_log(bot, f"⏳ <b>FloodWait:</b> Sleeping for <code>{wait_time}s</code> at ID <code>{current}</code>. Increasing delay to <code>{new_delay:.1f}s</code>.")
+                    delay_between_messages = new_delay
                     await asyncio.sleep(wait_time)
                     continue # IMPORTANT: Retry the same message ID after sleeping
                 else:
@@ -114,7 +118,7 @@ async def main():
                 await send_log(bot, progress_message)
             
             current += 1
-            await asyncio.sleep(DELAY_BETWEEN_MESSAGES)
+            await asyncio.sleep(delay_between_messages)
 
         end_time = datetime.now()
         
@@ -135,7 +139,7 @@ async def main():
             f"➤ <b>Duration:</b> <code>{str(total_time).split('.')[0]}</code>\n"
             f"━━━━━━━━━━━━━━━\n"
             f"📋 <b>Skipped Messages</b>\n"
-            f"<code>{skipped_report}</code>"
+            f"{skipped_report}" # MODIFIED: Removed <code> tags to make links clickable
         )
         await send_log(bot, final_report)
 
