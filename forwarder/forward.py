@@ -4,9 +4,8 @@ import re
 import json
 from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
-# ----- CONFIG -----
 API_TOKEN = os.getenv("BOT_TOKEN")
 DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
@@ -15,11 +14,7 @@ STATE_FILE = "forwarder/progress.json"
 
 LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
-# ----- HELPERS -----
 def parse_range_file():
-    """Return (source_chat, start_id, end_id)"""
-    if not os.path.exists(RANGE_FILE):
-        raise Exception(f"{RANGE_FILE} not found")
     content = open(RANGE_FILE, "r").read()
     matches = LINK_RE.findall(content)
     if len(matches) < 2:
@@ -46,14 +41,9 @@ async def send_log(bot, text):
         try:
             await bot.send_message(LOG_CHANNEL_ID, text)
         except:
-            pass  # ignore log errors
+            pass
 
-# ----- MAIN -----
 async def main():
-    if not all([API_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID]):
-        print("❌ BOT_TOKEN, DEST_CHANNEL_ID, LOG_CHANNEL_ID must be set")
-        return
-
     source_chat, start_id, end_id = parse_range_file()
     state = load_state()
     current = max(state.get("last_done", start_id - 1) + 1, start_id)
@@ -66,16 +56,16 @@ async def main():
             try:
                 await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
                 sent += 1
+            except TelegramBadRequest:
+                # Skip messages that cannot be copied (like polls, restricted content, etc.)
+                skipped += 1
             except TelegramAPIError as e:
                 if getattr(e, "retry_after", None):
                     await send_log(bot, f"⏳ FloodWait: sleeping {e.retry_after}s at ID {current}")
                     await asyncio.sleep(e.retry_after + 1)
                     continue
-                if e.error_code == 400 and "message to forward not found" in e.description.lower():
-                    skipped += 1
-                else:
-                    failed += 1
-                    await send_log(bot, f"⚠️ API error at {current}: {e}")
+                failed += 1
+                await send_log(bot, f"⚠️ API error at {current}: {e}")
             except Exception as e:
                 failed += 1
                 await send_log(bot, f"💥 Unexpected error at {current}: {e}")
