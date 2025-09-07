@@ -7,6 +7,7 @@ from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
+# ----- CONFIG -----
 API_TOKEN = os.getenv("BOT_TOKEN")
 DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
@@ -29,8 +30,11 @@ def parse_range_file():
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {}  # start fresh if file is empty/corrupt
     return {}
 
 def save_state(state):
@@ -61,22 +65,24 @@ async def main():
             success = False
             while not success:
                 try:
+                    # Try to copy the message (fast, keeps formatting)
                     await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
                     success = True
                 except TelegramBadRequest:
-                    # fallback: fetch original message and resend as text (simplest universal fallback)
+                    # Fallback: fetch original message content and send as text
                     try:
                         msg = await bot.get_message(chat_id=source_chat, message_id=current)
-                        if msg.text or msg.caption:
-                            content = msg.text or msg.caption
+                        content = msg.text or msg.caption or ""
+                        if content.strip():
                             await bot.send_message(chat_id=DEST_CHANNEL_ID, text=content)
                         else:
-                            # for media without text, resend as is
+                            # last resort: try copy again (may still fail for unsupported types)
                             await bot.copy_message(chat_id=DEST_CHANNEL_ID, from_chat_id=source_chat, message_id=current)
                         success = True
-                    except Exception as e:
-                        await asyncio.sleep(1)  # small delay before retrying
+                    except Exception:
+                        await asyncio.sleep(1)  # retry until success
                 except TelegramAPIError as e:
+                    # Handle flood wait
                     if getattr(e, "retry_after", None):
                         await asyncio.sleep(e.retry_after + 1)
                     else:
