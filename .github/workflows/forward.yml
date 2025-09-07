@@ -31,13 +31,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Step 4: Runs your main Python script.
-      # IMPORTANT: Replace 'main.py' with the actual name of your Python script file.
+      # Step 4: Runs your Python script from its subfolder.
       - name: Run the forwarder script
         env:
           # These secrets must be configured in your GitHub repository settings.
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DEST_CHANNEL_ID: ${{ secrets.DEST_CHANNEL_ID }}
           LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
-        run: python main.py # <-- CHANGE 'main.py' IF YOUR SCRIPT IS NAMED DIFFERENTLY
-
+        # This is the updated line with the correct path and filename.
+        run: python forwarder/forward.py
+        
