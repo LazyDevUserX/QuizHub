@@ -54,7 +54,7 @@ async def main():
     start_time = datetime.now()
     async with Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML")) as bot:
         start_message = (
-            f"🚀 <b>Forwarder Initialized (Final Version)</b> 🚀\n"
+            f"🚀 <b>Forwarder Initialized (Quiet Mode)</b> 🚀\n"
             f"━━━━━━━━━━━━━━━\n"
             f"➤ <b>Source:</b> <code>{source_chat}</code>\n"
             f"➤ <b>Range:</b> <code>{start_id}</code> to <code>{end_id}</code>\n"
@@ -64,7 +64,7 @@ async def main():
         await send_log(bot, start_message)
         
         current = start_id
-        # --- FINAL: Data-Driven Burst Configuration ---
+        # --- Data-Driven Burst Configuration ---
         DELAY_BETWEEN_MESSAGES = 0.2
         BURST_SIZE = 20
         BURST_PAUSE_DURATION = 42
@@ -101,11 +101,13 @@ async def main():
 
             processed_count = sent + skipped
             
+            # Pause after each burst, but ONLY if it's not the final burst.
             if processed_count > 0 and processed_count % BURST_SIZE == 0 and current < end_id:
-                await send_log(bot, f"⏱️ <b>Burst complete.</b> Pausing for <code>{BURST_PAUSE_DURATION}s</code>...")
+                # The log message for pausing has been removed.
                 await asyncio.sleep(BURST_PAUSE_DURATION)
             
-            if processed_count > 0 and processed_count % 25 == 0:
+            # Send a progress update every 100 processed messages.
+            if processed_count > 0 and processed_count % 100 == 0:
                 total_messages = end_id - start_id + 1
                 percentage = (processed_count / total_messages) * 100
                 progress_bar = create_progress_bar(processed_count, total_messages)
@@ -151,3 +153,4 @@ if __name__ == "__main__":
     except ImportError:
         pass
     asyncio.run(main())
+            
