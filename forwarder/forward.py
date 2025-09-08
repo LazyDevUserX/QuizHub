@@ -12,7 +12,8 @@ DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 # --- File Paths ---
-RANGE_FILE = "forwarder/forwardrange.txt"
+RANGE_FILE = "forwardrange.txt"
+
 
 LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
