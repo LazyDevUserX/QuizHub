@@ -1,7 +1,7 @@
 import asyncio
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
@@ -12,7 +12,7 @@ DEST_CHANNEL_ID = int(os.getenv("DEST_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
 
 # --- File Paths ---
-RANGE_FILE = "forwardrange.txt"
+RANGE_FILE = "forwarder/forwardrange.txt"
 
 LINK_RE = re.compile(r"https?://t\.me/([A-Za-z0-9_]+)/([0-9]+)")
 
@@ -52,6 +52,9 @@ async def main():
     skipped_links = []
 
     start_time = datetime.now()
+    # MODIFIED: Initialize a timer for progress reports
+    last_progress_report_time = start_time
+
     async with Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML")) as bot:
         start_message = (
             f"🚀 <b>Forwarder Initialized (Quiet Mode)</b> 🚀\n"
@@ -64,12 +67,12 @@ async def main():
         await send_log(bot, start_message)
         
         current = start_id
-        # --- Data-Driven Burst Configuration ---
         DELAY_BETWEEN_MESSAGES = 0.2
         BURST_SIZE = 20
         BURST_PAUSE_DURATION = 42
 
         while current <= end_id:
+            # ... (The entire try/except block for forwarding remains unchanged)
             try:
                 await bot.copy_message(
                     chat_id=DEST_CHANNEL_ID,
@@ -101,13 +104,12 @@ async def main():
 
             processed_count = sent + skipped
             
-            # Pause after each burst, but ONLY if it's not the final burst.
             if processed_count > 0 and processed_count % BURST_SIZE == 0 and current < end_id:
-                # The log message for pausing has been removed.
                 await asyncio.sleep(BURST_PAUSE_DURATION)
             
-            # Send a progress update every 100 processed messages.
-            if processed_count > 0 and processed_count % 100 == 0:
+            # MODIFIED: Check if 10 minutes have passed since the last report
+            time_since_last_report = datetime.now() - last_progress_report_time
+            if time_since_last_report >= timedelta(minutes=10):
                 total_messages = end_id - start_id + 1
                 percentage = (processed_count / total_messages) * 100
                 progress_bar = create_progress_bar(processed_count, total_messages)
@@ -120,12 +122,14 @@ async def main():
                     f"- <b>Last ID:</b> <code>{current}</code>"
                 )
                 await send_log(bot, progress_message)
+                # Reset the timer
+                last_progress_report_time = datetime.now()
             
             current += 1
             await asyncio.sleep(DELAY_BETWEEN_MESSAGES)
 
+        # ... (The final report block remains unchanged)
         end_time = datetime.now()
-        
         total_time = end_time - start_time
         skipped_report = "\n".join(skipped_links) if skipped_links else "None"
         final_report = (
@@ -153,4 +157,4 @@ if __name__ == "__main__":
     except ImportError:
         pass
     asyncio.run(main())
-            
+                
