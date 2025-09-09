@@ -28,8 +28,8 @@ LIMITS = {
     "MESSAGE_TEXT": 4096
 }
 
-MIN_DELAY_SECONDS = 3.0
-MAX_DELAY_SECONDS = 5.0
+MIN_DELAY_SECONDS = 1.0
+MAX_DELAY_SECONDS = 2.0
 
 # ====== LOGGING SETUP ======
 logging.basicConfig(
@@ -40,26 +40,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-# ====== STATE MANAGEMENT ======
-def load_progress(filename=STATE_FILE):
-    try:
-        with open(filename, 'r') as f:
-            progress = json.load(f)
-            index = int(progress.get('last_sent_index', 0))
-            logging.info(f"Loaded progress. Resuming from index {index}.")
-            return index
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
-        logging.info("No valid progress file found. Starting from beginning.")
-        return 0
-
-def save_progress(index, filename=STATE_FILE):
-    try:
-        with open(filename, 'w') as f:
-            json.dump({'last_sent_index': index}, f)
-    except IOError as e:
-        logging.critical(f"Failed to save progress to {filename}. Error: {e}")
-
 # ====== DATA LOADING & VALIDATION ======
 def load_items(file_path):
     try:
