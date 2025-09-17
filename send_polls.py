@@ -16,7 +16,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID") 
 
-STATE_FILE = "progress.json"
+# Batching Configuration
+BATCH_SIZE = 19
+BATCH_DELAY_SECONDS = 20
+
 LOG_FILE = "bot.log"
 QUESTION_PREFIX = "[MediX]\n"
 
@@ -28,6 +31,7 @@ LIMITS = {
     "MESSAGE_TEXT": 4096
 }
 
+# Delay between each individual poll to avoid rate limits
 MIN_DELAY_SECONDS = 1.0
 MAX_DELAY_SECONDS = 2.0
 
@@ -40,6 +44,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
 # ====== DATA LOADING & VALIDATION ======
 def load_items(file_path):
     try:
@@ -103,7 +108,6 @@ async def safe_send(bot, func, *args, **kwargs):
             logging.warning(f"Flood control: received RetryAfter({e.retry_after}s). Waiting {wait_time}s...")
             await asyncio.sleep(wait_time)
         
-        # FIX: Handle BadRequest by checking for the "too long" message
         except BadRequest as e:
             error_text = str(e).lower()
             if "too long" in error_text:
@@ -118,14 +122,12 @@ async def safe_send(bot, func, *args, **kwargs):
                     logging.warning(f"Caught BadRequest. Explanation auto-trimmed from {original_len} to {len(kwargs['explanation'])}. Retrying.")
                     continue
             
-            # If it's a different BadRequest, it's unrecoverable
             logging.error(f"Unrecoverable BadRequest on attempt {attempt}: {e}")
             raise e
 
         except (TimedOut, NetworkError) as e:
             error_text = str(e).lower()
             if "too long" in error_text:
-                # FIX: Also handle the "too long" message when it's disguised as a NetworkError
                 if 'question' in kwargs and len(kwargs['question']) > LIMITS["POLL_QUESTION"]:
                     original_len = len(kwargs['question'])
                     kwargs['question'] = kwargs['question'][:LIMITS["POLL_QUESTION"]]
@@ -149,7 +151,7 @@ async def safe_send(bot, func, *args, **kwargs):
     raise Exception(f"Failed to send message after 5 attempts.")
 
 # ====== MAIN PROCESSING LOGIC ======
-async def process_batch(json_file_path, batch_size):
+async def process_items_in_batches(json_file_path):
     if not BOT_TOKEN or not CHAT_ID:
         logging.critical("BOT_TOKEN or CHAT_ID environment variables are not set. Aborting.")
         return
@@ -160,28 +162,18 @@ async def process_batch(json_file_path, batch_size):
     item_list = load_items(json_file_path)
     if not item_list: return
 
-    start_index = load_progress()
-    if start_index == 0:
-        is_valid, error_summary = validate_data(item_list)
-        if not is_valid:
-            await send_log_to_telegram(bot, f"Pre-validation failed. Fix errors in source file.\n\nErrors:\n{error_summary}", "CRITICAL")
-            raise SystemExit("Validation failed. Halting execution.")
+    is_valid, error_summary = validate_data(item_list)
+    if not is_valid:
+        await send_log_to_telegram(bot, f"Pre-validation failed. Fix errors in source file.\n\nErrors:\n{error_summary}", "CRITICAL")
+        raise SystemExit("Validation failed. Halting execution.")
 
-    items_to_process = item_list[start_index : start_index + batch_size]
-    total_new_in_batch = len(items_to_process)
-    
-    if total_new_in_batch == 0:
-        logging.info("All items have already been sent according to progress file.")
-        await send_log_to_telegram(bot, "🎉 All items sent successfully! Task complete.", "INFO")
-        return
+    total_items = len(item_list)
+    logging.info(f"Starting to send all {total_items} items in batches of {BATCH_SIZE}...")
+    await send_log_to_telegram(bot, f"Processing {total_items} items from {json_file_path} in batches of {BATCH_SIZE}.")
 
-    logging.info(f"Starting to send batch of {total_new_in_batch} new items...")
-    await send_log_to_telegram(bot, f"Processing batch of {total_new_in_batch} items, starting from item #{start_index + 1}.")
-
-    for i, item in enumerate(items_to_process):
-        absolute_index = start_index + i
+    for i, item in enumerate(item_list):
         content_type = item.get('type', 'poll')
-        logging.info(f"Processing item {absolute_index + 1} of {len(item_list)} (type: {content_type})...")
+        logging.info(f"Processing item {i + 1} of {total_items} (type: {content_type})...")
 
         try:
             if content_type == 'message':
@@ -195,27 +187,35 @@ async def process_batch(json_file_path, batch_size):
                     poll_kwargs.update({"type": "regular"})
                 await safe_send(bot, bot.send_poll, **poll_kwargs)
 
-            save_progress(absolute_index + 1)
-            logging.info(f"Item {absolute_index + 1} sent successfully. Progress saved.")
+            logging.info(f"Item {i + 1} sent successfully.")
 
+            # Short delay between each message
             delay = random.uniform(MIN_DELAY_SECONDS, MAX_DELAY_SECONDS)
             await asyncio.sleep(delay)
+            
+            # Check if a batch is complete and apply the long delay
+            # We use (i + 1) because 'i' is 0-indexed.
+            # We also check that this is not the very last item in the list to avoid a pointless final pause.
+            if (i + 1) % BATCH_SIZE == 0 and (i + 1) < total_items:
+                log_message = f"✅ Batch of {BATCH_SIZE} complete ({i + 1}/{total_items} sent). Pausing for {BATCH_DELAY_SECONDS} seconds."
+                logging.info(log_message)
+                await send_log_to_telegram(bot, log_message, "INFO")
+                await asyncio.sleep(BATCH_DELAY_SECONDS)
+
 
         except Exception as e:
-            error_details = f"Failed to send item #{absolute_index + 1}.\nType: {content_type}\nError: {e}"
+            error_details = f"Failed to send item #{i + 1}.\nType: {content_type}\nError: {e}"
             logging.critical(error_details)
             await send_log_to_telegram(bot, error_details, "CRITICAL")
             raise SystemExit("Halting due to unrecoverable error during sending.")
 
-    logging.info(f"Batch of {total_new_in_batch} items sent successfully.")
-    await send_log_to_telegram(bot, f"✅ Batch complete. {total_new_in_batch} items sent.", "INFO")
+    logging.info(f"Successfully sent all {total_items} items.")
+    await send_log_to_telegram(bot, f"🎉 All {total_items} items sent successfully! Task complete.", "INFO")
 
 # ====== MAIN EXECUTION BLOCK ======
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Telegram Poll Bot with Batch Processing and Logging")
+    parser = argparse.ArgumentParser(description="Telegram Poll Bot with Batch Sending")
     parser.add_argument("json_file", help="Path to the source JSON file.")
-    parser.add_argument("--batch-size", type=int, default=50, help="Number of items to process in a single run.")
     args = parser.parse_args()
 
-    asyncio.run(process_batch(args.json_file, args.batch_size))
-
+    asyncio.run(process_items_in_batches(args.json_file))
