@@ -1,3 +1,5 @@
+# .github/workflows/auto_send_polls.yml
+
 name: Auto Send Telegram Polls
 
 on:
@@ -13,13 +15,6 @@ jobs:
   send-polls-job:
     runs-on: ubuntu-latest
 
-    # <<< THIS IS THE FIX
-    # By default, the GITHUB_TOKEN has read-only permissions.
-    # This block grants the token permission to write to the repository's contents,
-    # which is required for the 'git push' command to succeed.
-    permissions:
-      contents: write
-
     steps:
       - name: 1. Checkout Repository Code
         uses: actions/checkout@v4
@@ -32,25 +27,11 @@ jobs:
       - name: 3. Install Python Dependencies
         run: pip install -r requirements.txt
 
-      - name: 4. Run Poll Sender Script in a Loop
+      # The 'run' step is now a single, simple command.
+      # The loop, git commands, and '--batch-size' argument have been removed.
+      - name: 4. Run Poll Sender Script
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           LOG_CHANNEL_ID: ${{ secrets.LOG_CHANNEL_ID }}
-        run: |
-          while true; do
-            python send_polls.py questions.json --batch-size 50
-            
-            if git diff --quiet progress.json; then
-              echo "✅ No changes in progress.json. All items have been sent. Exiting loop."
-              break
-            fi
-            
-            echo "ℹ️ Progress was made. Committing 'progress.json' for the next batch."
-            git config --global user.name 'GitHub Actions Bot'
-            git config --global user.email 'actions-bot@github.com'
-            git add progress.json
-            git commit -m "Update poll progress"
-            git push
-          done
-
+        run: python send_polls.py questions.json
