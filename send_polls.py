@@ -16,9 +16,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID") 
 
-# Batching Configuration
+# --- EDIT YOUR SETTINGS HERE ---
+# The number of polls to send in each batch.
 BATCH_SIZE = 19
+# The pause in seconds between each batch.
 BATCH_DELAY_SECONDS = 20
+# --- END OF SETTINGS ---
 
 LOG_FILE = "bot.log"
 QUESTION_PREFIX = "[MediX]\n"
@@ -201,7 +204,6 @@ async def process_items_in_batches(json_file_path):
                 logging.info(log_message)
                 await send_log_to_telegram(bot, log_message, "INFO")
                 await asyncio.sleep(BATCH_DELAY_SECONDS)
-
 
         except Exception as e:
             error_details = f"Failed to send item #{i + 1}.\nType: {content_type}\nError: {e}"
